@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.galois.checker</groupId>
+    <artifactId>examples</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+
+    <name>checker-framework-examples</name>
+    <description>
+        Tiny intentionally-buggy programs exercising the Nullness, Index,
+        Regex, and Resource Leak (MustCall) Checker Framework checkers.
+        Each file is expected to produce a checker error on compile.
+    </description>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+        <checker.version>3.49.0</checker.version>
+    </properties>
+
+    <dependencies>
+        <!-- Annotations only; kept on the runtime classpath of consumers. -->
+        <dependency>
+            <groupId>org.checkerframework</groupId>
+            <artifactId>checker-qual</artifactId>
+            <version>${checker.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <!-- fork=true is required so the -J flags below are passed
+                         to the javac JVM, not the Maven JVM. -->
+                    <fork>true</fork>
+
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.checkerframework</groupId>
+                            <artifactId>checker</artifactId>
+                            <version>${checker.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+
+                    <!-- We pass `-processor` directly via compilerArgs as a
+                         single comma-separated value. The maven-compiler-plugin
+                         <annotationProcessors> tag produces repeated -processor
+                         flags, but we want one. -->
+                    <!--
+                         Checker Framework limitation: when multiple checkers
+                         are listed, javac may halt after the FIRST one to find
+                         errors, so the others never report. We work around
+                         this with `-Awarns` (errors become warnings, all
+                         checkers complete). The Makefile then greps the build
+                         log for checker findings and fails the target if any
+                         are present — restoring the "build fails on bug" UX.
+                         See https://checkerframework.org/manual/#multiple-checkers
+                    -->
+
+                    <compilerArgs>
+                        <arg>-processor</arg>
+                        <arg>org.checkerframework.checker.nullness.NullnessChecker,org.checkerframework.checker.index.IndexChecker,org.checkerframework.checker.regex.RegexChecker,org.checkerframework.checker.resourceleak.ResourceLeakChecker</arg>
+                        <arg>-Awarns</arg>
+                        <arg>-Xmaxwarns</arg>
+                        <arg>10000</arg>
+                        <arg>-Xlint:-options</arg>
+                        <!-- Required on JDK 9+: Checker Framework reaches into
+                             javac internals. See
+                             https://checkerframework.org/manual/#javac-jdk-jdk9 -->
+                        <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED</arg>
+                        <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED</arg>
+                        <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED</arg>
+                        <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.main=ALL-UNNAMED</arg>
+                        <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.model=ALL-UNNAMED</arg>
+                        <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.processing=ALL-UNNAMED</arg>
+                        <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED</arg>
+                        <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED</arg>
+                        <arg>-J--add-opens=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

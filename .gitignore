@@ -1,0 +1,20 @@
+# Maven build output
+target/
+*.class
+
+# Project-local Maven repository (see .mvn/maven.config)
+.m2/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.project
+.classpath
+.settings/
+
+# Claude
+.claude/
+
+# macOS
+.DS_Store

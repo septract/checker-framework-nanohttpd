@@ -9,6 +9,16 @@ import java.nio.channels.FileChannel;
 import java.text.SimpleDateFormat;
 import java.util.*;
 
+import org.checkerframework.checker.calledmethods.qual.EnsuresCalledMethods;
+import org.checkerframework.checker.initialization.qual.UnknownInitialization;
+import org.checkerframework.checker.mustcall.qual.CreatesMustCallFor;
+import org.checkerframework.checker.mustcall.qual.InheritableMustCall;
+import org.checkerframework.checker.mustcall.qual.Owning;
+import org.checkerframework.checker.nullness.qual.EnsuresNonNull;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.checker.nullness.qual.RequiresNonNull;
+
 /**
  * A simple, tiny, nicely embeddable HTTP server in Java
  * <p/>
@@ -53,6 +63,7 @@ import java.util.*;
  * <p/>
  * See the separate "LICENSE.md" file for the distribution license (Modified BSD licence)
  */
+@InheritableMustCall("stop")
 public abstract class NanoHTTPD {
     /**
      * Common mime type for dynamic content: plain text
@@ -66,10 +77,10 @@ public abstract class NanoHTTPD {
      * Common mime type for dynamic content: binary
      */
     public static final String MIME_DEFAULT_BINARY = "application/octet-stream";
-    private final String hostname;
+    private final @Nullable String hostname;
     private final int myPort;
-    private ServerSocket myServerSocket;
-    private Thread myThread;
+    private @Owning @MonotonicNonNull ServerSocket myServerSocket;
+    private @MonotonicNonNull Thread myThread;
     /**
      * Pseudo-Parameter to use to store the actual query string in the parameters map for later re-processing.
      */
@@ -85,7 +96,7 @@ public abstract class NanoHTTPD {
     /**
      * Constructs an HTTP server on given hostname andport.
      */
-    public NanoHTTPD(String hostname, int port) {
+    public NanoHTTPD(@Nullable String hostname, int port) {
         this.hostname = hostname;
         this.myPort = port;
         setTempFileManagerFactory(new DefaultTempFileManagerFactory());
@@ -96,6 +107,7 @@ public abstract class NanoHTTPD {
      * Start the server.
      * @throws IOException if the socket is in use.
      */
+    @CreatesMustCallFor("this")
     public void start() throws IOException {
         myServerSocket = new ServerSocket();
         myServerSocket.bind((hostname != null) ? new InetSocketAddress(hostname, myPort) : new InetSocketAddress(myPort));
@@ -133,6 +145,8 @@ public abstract class NanoHTTPD {
     /**
      * Stop the server.
      */
+    @RequiresNonNull({"myServerSocket", "myThread"})
+    @EnsuresCalledMethods(value = "this.myServerSocket", methods = "close")
     public void stop() {
         try {
             myServerSocket.close();
@@ -202,7 +216,7 @@ public abstract class NanoHTTPD {
      * @param queryString a query string pulled from the URL.
      * @return a map of <code>String</code> (parameter name) to <code>List&lt;String&gt;</code> (a list of the values supplied).
      */
-    protected Map<String, List<String>> decodeParameters(String queryString) {
+    protected Map<String, List<String>> decodeParameters(@Nullable String queryString) {
         Map<String, List<String>> parms = new HashMap<String, List<String>>();
         if (queryString != null) {
             StringTokenizer st = new StringTokenizer(queryString, "&");
@@ -228,7 +242,7 @@ public abstract class NanoHTTPD {
     public enum Method {
         GET, PUT, POST, DELETE, HEAD;
 
-        static Method lookup(String method) {
+        static @Nullable Method lookup(@Nullable String method) {
             for (Method m : Method.values()) {
                 if (m.toString().equalsIgnoreCase(method)) {
                     return m;
@@ -253,7 +267,8 @@ public abstract class NanoHTTPD {
      * Pluggable strategy for asynchronously executing requests.
      * @param asyncRunner new strategy for handling threads.
      */
-    public void setAsyncRunner(AsyncRunner asyncRunner) {
+    @EnsuresNonNull("this.asyncRunner")
+    public void setAsyncRunner(@UnknownInitialization NanoHTTPD this, AsyncRunner asyncRunner) {
         this.asyncRunner = asyncRunner;
     }
 
@@ -298,7 +313,8 @@ public abstract class NanoHTTPD {
      * Pluggable strategy for creating and cleaning up temporary files.
      * @param tempFileManagerFactory new strategy for handling temp files.
      */
-    public void setTempFileManagerFactory(TempFileManagerFactory tempFileManagerFactory) {
+    @EnsuresNonNull("this.tempFileManagerFactory")
+    public void setTempFileManagerFactory(@UnknownInitialization NanoHTTPD this, TempFileManagerFactory tempFileManagerFactory) {
         this.tempFileManagerFactory = tempFileManagerFactory;
     }
 
@@ -430,7 +446,7 @@ public abstract class NanoHTTPD {
         /**
          * Data of the response, may be null.
          */
-        private InputStream data;
+        private @Nullable InputStream data;
         /**
          * Headers for the HTTP response. Use addHeader() to add lines.
          */
@@ -438,7 +454,7 @@ public abstract class NanoHTTPD {
         /**
          * The request method that spawned this response.
          */
-        private Method requestMethod;
+        private @MonotonicNonNull Method requestMethod;
         /**
          * Default constructor: response = HTTP_OK, mime = MIME_HTML and your supplied message
          */
@@ -449,7 +465,7 @@ public abstract class NanoHTTPD {
         /**
          * Basic constructor.
          */
-        public Response(Status status, String mimeType, InputStream data) {
+        public Response(Status status, String mimeType, @Nullable InputStream data) {
             this.status = status;
             this.mimeType = mimeType;
             this.data = data;
@@ -458,7 +474,7 @@ public abstract class NanoHTTPD {
         /**
          * Convenience method that makes an InputStream out of given text.
          */
-        public Response(Status status, String mimeType, String txt) {
+        public Response(Status status, String mimeType, @Nullable String txt) {
             this.status = status;
             this.mimeType = mimeType;
             try {
@@ -551,15 +567,15 @@ public abstract class NanoHTTPD {
             this.mimeType = mimeType;
         }
 
-        public InputStream getData() {
+        public @Nullable InputStream getData() {
             return data;
         }
 
-        public void setData(InputStream data) {
+        public void setData(@Nullable InputStream data) {
             this.data = data;
         }
 
-        public Method getRequestMethod() {
+        public @Nullable Method getRequestMethod() {
             return requestMethod;
         }
 
@@ -968,7 +984,7 @@ public abstract class NanoHTTPD {
             return path;
         }
 
-        private RandomAccessFile getTmpBucket() {
+        private @Nullable RandomAccessFile getTmpBucket() {
             try {
                 TempFile tempFile = tempFileManager.createTempFile();
                 return new RandomAccessFile(tempFile.getName(), "rw");
@@ -995,7 +1011,7 @@ public abstract class NanoHTTPD {
          * Decodes parameters in percent-encoded URI-format ( e.g. "name=Jack%20Daniels&pass=Single%20Malt" ) and
          * adds them to given Map. NOTE: this doesn't support multiple identical keys due to the simplicity of Map.
          */
-        private void decodeParms(String parms, Map<String, String> p) {
+        private void decodeParms(@Nullable String parms, Map<String, String> p) {
             if (parms == null) {
                 p.put(QUERY_STRING_PARAMETER, "");
                 return;

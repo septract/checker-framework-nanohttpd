@@ -10,6 +10,7 @@ import java.text.SimpleDateFormat;
 import java.util.*;
 
 import org.checkerframework.checker.calledmethods.qual.EnsuresCalledMethods;
+import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.initialization.qual.UnknownInitialization;
 import org.checkerframework.checker.mustcall.qual.CreatesMustCallFor;
 import org.checkerframework.checker.mustcall.qual.InheritableMustCall;
@@ -109,6 +110,9 @@ public abstract class NanoHTTPD {
      */
     @CreatesMustCallFor("this")
     public void start() throws IOException {
+        if (myServerSocket != null) {
+            throw new IllegalStateException("Server has already been started.");
+        }
         myServerSocket = new ServerSocket();
         myServerSocket.bind((hostname != null) ? new InetSocketAddress(hostname, myPort) : new InetSocketAddress(myPort));
 
@@ -116,12 +120,14 @@ public abstract class NanoHTTPD {
             @Override
             public void run() {
                 do {
+                    Socket accepted = null;
                     try {
-                        final Socket finalAccept = myServerSocket.accept();
-                        InputStream inputStream = finalAccept.getInputStream();
-                        OutputStream outputStream = finalAccept.getOutputStream();
+                        accepted = myServerSocket.accept();
+                        InputStream inputStream = accepted.getInputStream();
+                        OutputStream outputStream = accepted.getOutputStream();
                         TempFileManager tempFileManager = tempFileManagerFactory.create();
                         final HTTPSession session = new HTTPSession(tempFileManager, inputStream, outputStream);
+                        final Socket finalAccept = accepted;
                         asyncRunner.exec(new Runnable() {
                             @Override
                             public void run() {
@@ -132,7 +138,14 @@ public abstract class NanoHTTPD {
                                 }
                             }
                         });
+                        accepted = null; // ownership transferred to async runnable
                     } catch (IOException e) {
+                        if (accepted != null) {
+                            try {
+                                accepted.close();
+                            } catch (IOException ignored) {
+                            }
+                        }
                     }
                 } while (!myServerSocket.isClosed());
             }
@@ -149,9 +162,13 @@ public abstract class NanoHTTPD {
     @EnsuresCalledMethods(value = "this.myServerSocket", methods = "close")
     public void stop() {
         try {
-            myServerSocket.close();
+            this.myServerSocket.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        try {
             myThread.join();
-        } catch (Exception e) {
+        } catch (InterruptedException e) {
             e.printStackTrace();
         }
     }
@@ -185,8 +202,13 @@ public abstract class NanoHTTPD {
                     sb.append(' ');
                     break;
                 case '%':
-                    sb.append((char) Integer.parseInt(str.substring(i + 1, i + 3), 16));
-                    i += 2;
+                    if (i + 3 <= str.length()) {
+                        sb.append((char) Integer.parseInt(str.substring(i + 1, i + 3), 16));
+                        i += 2;
+                    } else {
+                        // Truncated %-escape at end of input; pass through literally.
+                        sb.append(c);
+                    }
                     break;
                 default:
                     sb.append(c);
@@ -528,12 +550,13 @@ public abstract class NanoHTTPD {
                 pw.print("\r\n");
                 pw.flush();
 
-                if (requestMethod != Method.HEAD && data != null) {
-                    int pending = data.available(); // This is to support partial sends, see serveFile()
+                final InputStream localData = data;
+                if (requestMethod != Method.HEAD && localData != null) {
+                    int pending = localData.available(); // This is to support partial sends, see serveFile()
                     int BUFFER_SIZE = 16 * 1024;
                     byte[] buff = new byte[BUFFER_SIZE];
                     while (pending > 0) {
-                        int read = data.read(buff, 0, ((pending > BUFFER_SIZE) ? BUFFER_SIZE : pending));
+                        int read = localData.read(buff, 0, ((pending > BUFFER_SIZE) ? BUFFER_SIZE : pending));
                         if (read <= 0) {
                             break;
                         }
@@ -544,8 +567,8 @@ public abstract class NanoHTTPD {
                 }
                 outputStream.flush();
                 outputStream.close();
-                if (data != null)
-                    data.close();
+                if (localData != null)
+                    localData.close();
             } catch (IOException ioe) {
                 // Couldn't write? No can do.
             }
@@ -626,6 +649,7 @@ public abstract class NanoHTTPD {
 
         @Override
         public void run() {
+            RandomAccessFile f = null;
             try {
                 if (inputStream == null) {
                     return;
@@ -642,10 +666,16 @@ public abstract class NanoHTTPD {
                     int read = inputStream.read(buf, 0, BUFSIZE);
                     while (read > 0) {
                         rlen += read;
+                        // Defensive: read() must not return more than requested,
+                        // so rlen never exceeds buf.length in practice. The
+                        // clamp gives CF the invariant explicitly.
+                        if (rlen > buf.length) {
+                            rlen = buf.length;
+                        }
                         splitbyte = findHeaderEnd(buf, rlen);
                         if (splitbyte > 0)
                             break;
-                        read = inputStream.read(buf, rlen, BUFSIZE - rlen);
+                        read = inputStream.read(buf, rlen, buf.length - rlen);
                     }
                 }
 
@@ -664,10 +694,14 @@ public abstract class NanoHTTPD {
                     throw new InterruptedException();
                 }
                 String uri = pre.get("uri");
+                if (uri == null) {
+                    Response.error(outputStream, Response.Status.BAD_REQUEST, "BAD REQUEST: Missing URI.");
+                    throw new InterruptedException();
+                }
                 long size = extractContentLength(header);
 
                 // Write the part of body already read to ByteArrayOutputStream f
-                RandomAccessFile f = getTmpBucket();
+                f = getTmpBucket();
                 if (splitbyte < rlen) {
                     f.write(buf, splitbyte, rlen - splitbyte);
                 }
@@ -718,14 +752,27 @@ public abstract class NanoHTTPD {
 
                     if ("multipart/form-data".equalsIgnoreCase(contentType)) {
                         // Handle multipart/form-data
+                        if (st == null || contentTypeHeader == null) {
+                            // Unreachable: contentType is "multipart/form-data" only if
+                            // st and contentTypeHeader were both non-null when contentType
+                            // was assigned via st.nextToken() above. CF can't see this
+                            // implication, so make it explicit.
+                            Response.error(outputStream, Response.Status.BAD_REQUEST, "BAD REQUEST: Internal state inconsistency.");
+                            throw new InterruptedException();
+                        }
                         if (!st.hasMoreTokens()) {
                             Response.error(outputStream, Response.Status.BAD_REQUEST, "BAD REQUEST: Content type is multipart/form-data but boundary missing. Usage: GET /example/file.html");
                             throw new InterruptedException();
                         }
 
                         String boundaryStartString = "boundary=";
-                        int boundaryContentStart = contentTypeHeader.indexOf(boundaryStartString) + boundaryStartString.length();
-                        String boundary = contentTypeHeader.substring(boundaryContentStart, contentTypeHeader.length());
+                        int boundaryIdx = contentTypeHeader.indexOf(boundaryStartString);
+                        if (boundaryIdx < 0) {
+                            Response.error(outputStream, Response.Status.BAD_REQUEST, "BAD REQUEST: Content type is multipart/form-data but boundary marker missing.");
+                            throw new InterruptedException();
+                        }
+                        int boundaryContentStart = boundaryIdx + boundaryStartString.length();
+                        String boundary = contentTypeHeader.substring(boundaryContentStart);
                         if (boundary.startsWith("\"") && boundary.startsWith("\"")) {
                             boundary = boundary.substring(1, boundary.length() - 1);
                         }
@@ -768,6 +815,13 @@ public abstract class NanoHTTPD {
             } catch (InterruptedException ie) {
                 // Thrown by sendError, ignore and exit the thread.
             } finally {
+                if (f != null) {
+                    try {
+                        f.close();
+                    } catch (IOException ignored) {
+                        // bin/in may have already closed the shared FileDescriptor.
+                    }
+                }
                 tempFileManager.clear();
             }
         }
@@ -882,6 +936,10 @@ public abstract class NanoHTTPD {
                             }
                         }
                         String pname = disposition.get("name");
+                        if (pname == null || pname.length() < 2) {
+                            Response.error(outputStream, Response.Status.BAD_REQUEST, "BAD REQUEST: Content-disposition 'name' field is missing or malformed.");
+                            throw new InterruptedException();
+                        }
                         pname = pname.substring(1, pname.length() - 1);
 
                         String value = "";
@@ -893,20 +951,24 @@ public abstract class NanoHTTPD {
                                     if (d == -1) {
                                         value += mpline;
                                     } else {
-                                        value += mpline.substring(0, d - 2);
+                                        value += mpline.substring(0, Math.min(Math.max(0, d - 2), mpline.length()));
                                     }
                                 }
                             }
                         } else {
-                            if (boundarycount > bpositions.length) {
+                            if (boundarycount < 2 || boundarycount > bpositions.length) {
                                 Response.error(outputStream, Response.Status.INTERNAL_ERROR, "Error processing request");
                                 throw new InterruptedException();
                             }
                             int offset = stripMultipartHeaders(fbuf, bpositions[boundarycount - 2]);
                             String path = saveTmpFile(fbuf, offset, bpositions[boundarycount - 1] - offset - 4);
                             files.put(pname, path);
-                            value = disposition.get("filename");
-                            value = value.substring(1, value.length() - 1);
+                            String filename = disposition.get("filename");
+                            if (filename == null || filename.length() < 2) {
+                                Response.error(outputStream, Response.Status.BAD_REQUEST, "BAD REQUEST: Content-disposition 'filename' field is missing or malformed.");
+                                throw new InterruptedException();
+                            }
+                            value = filename.substring(1, filename.length() - 1);
                             do {
                                 mpline = in.readLine();
                             } while (mpline != null && !mpline.contains(boundary));
@@ -923,7 +985,8 @@ public abstract class NanoHTTPD {
         /**
          * Find byte index separating header from body. It must be the last byte of the first two sequential new lines.
          */
-        private int findHeaderEnd(final byte[] buf, int rlen) {
+        private @NonNegative int findHeaderEnd(final byte[] buf, int rlen) {
+            rlen = Math.min(rlen, buf.length);
             int splitbyte = 0;
             while (splitbyte + 3 < rlen) {
                 if (buf[splitbyte] == '\r' && buf[splitbyte + 1] == '\n' && buf[splitbyte + 2] == '\r' && buf[splitbyte + 3] == '\n') {
@@ -942,7 +1005,7 @@ public abstract class NanoHTTPD {
             int matchbyte = -1;
             List<Integer> matchbytes = new ArrayList<Integer>();
             for (int i=0; i<b.limit(); i++) {
-                if (b.get(i) == boundary[matchcount]) {
+                if (matchcount >= 0 && matchcount < boundary.length && b.get(i) == boundary[matchcount]) {
                     if (matchcount == 0)
                         matchbyte = i;
                     matchcount++;
@@ -973,9 +1036,11 @@ public abstract class NanoHTTPD {
                 try {
                     TempFile tempFile = tempFileManager.createTempFile();
                     ByteBuffer src = b.duplicate();
-                    FileChannel dest = new FileOutputStream(tempFile.getName()).getChannel();
-                    src.position(offset).limit(offset + len);
-                    dest.write(src.slice());
+                    try (FileOutputStream fos = new FileOutputStream(tempFile.getName())) {
+                        FileChannel dest = fos.getChannel();
+                        src.position(offset).limit(offset + len);
+                        dest.write(src.slice());
+                    }
                     path = tempFile.getName();
                 } catch (Exception e) { // Catch exception if any
                     System.err.println("Error: " + e.getMessage());
@@ -984,14 +1049,13 @@ public abstract class NanoHTTPD {
             return path;
         }
 
-        private @Nullable RandomAccessFile getTmpBucket() {
+        private RandomAccessFile getTmpBucket() throws IOException {
             try {
                 TempFile tempFile = tempFileManager.createTempFile();
                 return new RandomAccessFile(tempFile.getName(), "rw");
             } catch (Exception e) {
-                System.err.println("Error: " + e.getMessage());
+                throw new IOException("Error creating temp file: " + e.getMessage(), e);
             }
-            return null;
         }
 
         /**

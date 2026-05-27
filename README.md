@@ -1,5 +1,13 @@
 # checker-framework-nanohttpd
 
+> **AI-generated, human-overseen.** All artifacts in this repository — code,
+> Checker Framework annotations, bug fixes, documentation, and commit messages —
+> were produced by an AI assistant (Claude) working under human direction and
+> review. A human chose the goals and constraints (including the deliberately
+> old target and the "no suppressed warnings" rule), reviewed the output, and
+> caught and corrected mistakes along the way, but the generation itself is AI
+> work. Read it with that in mind.
+
 A hands-on exploration of the [Checker Framework](https://checkerframework.org/) —
 a pluggable type-checker for Java — on real code.
 

@@ -107,9 +107,17 @@ compiler flags that mute findings. Where a property is true but the checker
 cannot verify it, the finding is left standing and documented rather than
 hidden.
 
-The full write-up — a taxonomy of the kinds of change, a phase-by-phase
-account, and an honest analysis of every remaining finding — is in
-[`case-study/2026-05-25_change-analysis.md`](case-study/2026-05-25_change-analysis.md).
+Two write-ups accompany the work:
+
+- [`case-study/2026-05-26_bugs-found.md`](case-study/2026-05-26_bugs-found.md)
+  — an inventory of the **actual bugs** the checkers surfaced (resource leaks,
+  null dereferences, and index-out-of-bounds reachable from untrusted request
+  input), each with the input that triggers it. This is the payoff of the
+  study. (Scope reminder: these are bugs in the 2013 version studied here, not
+  a claim about current NanoHTTPD.)
+- [`case-study/2026-05-25_change-analysis.md`](case-study/2026-05-25_change-analysis.md)
+  — the process write-up: a taxonomy of the kinds of change, a phase-by-phase
+  account, and an honest analysis of every remaining finding.
 
 ## Repository layout
 
@@ -128,7 +136,8 @@ account, and an honest analysis of every remaining finding — is in
     ├── pom.xml
     ├── UPSTREAM.md                # provenance: NanoHTTPD 2.0.0-Release
     ├── UPSTREAM-LICENSE.md        # upstream BSD license
-    ├── 2026-05-25_change-analysis.md
+    ├── 2026-05-26_bugs-found.md   # inventory of bugs the checkers surfaced
+    ├── 2026-05-25_change-analysis.md  # process write-up + residuals
     └── src/main/java/fi/iki/elonen/NanoHTTPD.java
 ```
 
